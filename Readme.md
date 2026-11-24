@@ -18,9 +18,9 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 
 </div>
 
-## 中文指南 · 训练 HVI 基线与十一个改进方案
+## 中文指南 · 训练 HVI 基线与十六个改进方案
 
-这十一组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
+这十六组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
 
 | 训练入口 | 相对原版 CIDNet 的改动 | 总参数 | 新增参数 |
 |---|---|---:|---:|
@@ -36,12 +36,19 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 | `j` | TPCNet 的 CG_MSA_V，在解码器中用 I 特征引导 HV 特征 | 1,999,501 | 23,932 |
 | `k` | LAformer 的秩增强线性注意力，在 HV 解码特征上聚合全局信息与局部纹理 | 1,998,465 | 22,896 |
 | `l` | MArFE 的正弦激活与傅里叶重参数化线性层，学习 HV 特征的通道映射 | 1,985,506 | 9,937 |
+| `m` | InterLight 退化字典按图像调制编码器 HV 跳连 | 2,030,482 | 54,913 |
+| `n` | DRWKV 可学习 Scharr 算子增强半分辨率亮度特征 | 1,982,102 | 6,533 |
+| `o` | D²R²OSR 空间与通道双门控，将 HV 信息注入同尺度 I 解码特征 | 2,000,996 | 25,427 |
+| `p` | 将已有 I_LCA5 输出经可学习系数接回亮度解码器，验证原版连线 | 1,975,570 | 1 |
+| `q` | Multinex 六种解析亮度图补充 I 分支的输入 | 1,975,785 | 216 |
 
 近期论文的模块移植实验可优先查看 J、K、L。三组分别实现 TPCNet 的跨分支注意力、LAformer 的全局线性注意力和 MArFE 的傅里叶线性层，并在相同的解码位置与基线比较。[论文、作者源码与移植说明](experiments/README.md#论文模块移植)
 
+M–Q 分别验证按图像建模退化、边缘增强、跨分支门控、原有亮度连线和解析亮度先验。[论文拆解、选型与训练命令](experiments/README.md#亮度分支与退化先验实验)
+
 ### 运行训练
 
-在已配置依赖的环境中，从仓库根目录运行以下 Bash 命令。以 LOL-v2 Real 为例，将 `DATA` 指向包含 `Train` 和 `Test` 的目录，两者各有配对的 `Low/` 和 `Normal/` 图片。先运行基线，再把 `VARIANT` 改成 `a`、`b`、`c`、`d`、`f`、`g`、`h`、`i`、`j`、`k` 或 `l`，重新执行训练命令。每个方案会写入独立目录。
+在已配置依赖的环境中，从仓库根目录运行以下 Bash 命令。以 LOL-v2 Real 为例，将 `DATA` 指向包含 `Train` 和 `Test` 的目录，两者各有配对的 `Low/` 和 `Normal/` 图片。先运行基线，再把 `VARIANT` 改成 `a`、`b`、`c`、`d`、`f`、`g`、`h`、`i`、`j`、`k`、`l`、`m`、`n`、`o`、`p` 或 `q`，重新执行训练命令。每个方案会写入独立目录。
 
 ```bash
 DATA=./datasets/LOLv2/Real_captured

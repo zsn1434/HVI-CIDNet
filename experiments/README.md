@@ -1,6 +1,6 @@
 # HVI-CIDNet 配对低光增强实验
 
-从仓库根目录使用 `python -m experiments.<方案> train` 训练，使用同一模块的 `eval` 评测。每个方案文件都定义了自己的改动。公共训练器在 `experiments/runner.py`。各组均保留原 CIDNet 解码连线，包括原实现中输出被覆盖的 I_LCA5。
+从仓库根目录使用 `python -m experiments.<方案> train` 训练，使用同一模块的 `eval` 评测。每个方案文件都定义了自己的改动。公共训练器在 `experiments/runner.py`。基线沿用原 CIDNet 的解码连线。P 单独检验将 I_LCA5 输出接回主路径的作用。
 
 | 模块 | 实际总参数 | 额外参数 | 训练差异 |
 |---|---:|---:|---|
@@ -16,8 +16,46 @@
 | [j](j.py) | 1,999,501 | 23,932 | TPCNet 的 CG_MSA_V，以 I 特征引导 HV 解码 |
 | [k](k.py) | 1,998,465 | 22,896 | LAformer 的秩增强全局线性注意力 |
 | [l](l.py) | 1,985,506 | 9,937 | MArFE 的傅里叶重参数化线性层与正弦激活 |
+| [m](m.py) | 2,030,482 | 54,913 | InterLight 退化字典按图像调制编码器 HV 跳连 |
+| [n](n.py) | 1,982,102 | 6,533 | DRWKV 可学习 Scharr 算子增强半分辨率亮度特征 |
+| [o](o.py) | 2,000,996 | 25,427 | D²R²OSR 空间与通道双门控，将 HV 信息注入同尺度 I 解码特征 |
+| [p](p.py) | 1,975,570 | 1 | 将已有 I_LCA5 输出经可学习系数接回亮度解码器，验证原版连线 |
+| [q](q.py) | 1,975,785 | 216 | Multinex 六种解析亮度图补充 I 分支的输入 |
 
 A 的门控初始为恒等混合，C、D 的残差投影初始为零，均可从原版权重开始。A 的 `--noise-std` 在 [0,1] sRGB 张量上定义，初值 0.015。一批裁剪产生两份训练观测，显存紧张时可调整所有对照组的 batch 大小。B 默认用合成的同曝光噪声对估计当前批次各亮度组的 HV 扰动方差，做有界归一化和最差组加权。它测量对附加噪声的敏感度，真实相机噪声标定需要另外采集数据。C 在输入坐标上按 32 像素窗口汇总并插值融合权重。D 只投影细节适配器输出矩阵的感知梯度，使其与保真适配器输出矩阵当前的列空间正交。两个目标都训练主干。
+
+## 亮度分支与退化先验实验
+
+此前 J、K、L 均在同一级 HV 解码特征上增加计算。本轮把问题拆为输入亮度如何表示、编码器如何适应不同场景，以及亮度解码器如何利用边缘和色度。M、N、O、Q 对应四篇 2026 年论文的独立模块。P 是来自本仓库代码检查的对照实验。
+
+| 方案 | 作者方法与本仓库实现 | 最有辨别力的对照与观察 |
+|---|---|---|
+| **M · InterLight，IJCAI 2026** | 作者源码已经在 CIDNet 上使用 RIN、PAB 和特征记忆。M 保留 RIN 的五层卷积、全局池化、softmax 字典检索与 GELU，输入改用 HVI；16 个 32 维原子生成图像级描述，再用 PAB 的通道缩放与偏置调制四分之一分辨率的 HV 跳连。未引入作者的空间提示、记忆更新或数据扩增。 | 适合检验不同照明场景是否需要不同的色彩恢复映射。若有提升，可在验证时把每图字典系数替换成训练集平均系数，观察逐图条件的贡献。训练使用局部裁剪，整图推理时字典系数可能变化。[论文](https://arxiv.org/abs/2605.19982) · [RIN 原码](https://github.com/House-yuyu/InterLight/blob/590f1e7e9e9d74b163302f40a0a6edf4201d9627/src/net/rin.py) · [PAB 原码](https://github.com/House-yuyu/InterLight/blob/590f1e7e9e9d74b163302f40a0a6edf4201d9627/src/net/pab.py) |
+| **N · DRWKV，WACV 2026** | 从 CFEM 提取 Scharr 分支，保留两个可学习方向卷积的 Scharr 初始化、绝对值梯度和、BatchNorm 以及卷积融合。输入取半分辨率的 I 解码特征，经零初始化系数作残差相加。 | 针对灯牌文字、门框等明暗边界断裂。比较 SSIM，并同时查看平坦暗部的噪点是否变粗。要隔离方向先验，可在相同结构上仅改成随机初始化。[论文](https://openaccess.thecvf.com/content/WACV2026/papers/Bai_DRWKV_Focusing_on_Object_Edges_for_Low-Light_Image_Enhancement_WACV_2026_paper.pdf) · [Scharr 原码](https://github.com/Bai-Xuecheng/DRWKV/blob/88cb54313692b279d6f1204b6353d38e36242a4f/Block.py#L373) |
+| **O · D²R²OSR，ECCV 2026** | 全景超分模型用 AdaptiveFusion 合并全景与透视特征。空间门由两路特征共同预测，通道门由主路全局池化预测。O 保留两道门及乘法注入，主路改为 I，引导路改为 HV，两路均为半分辨率的 36 通道。 | 与 J 有实质差别。J 用 I 引导色度，O 用色度帮助亮度定位边界。若 O 提升，再将其中一道门固定为 1，可区分空间选择与通道选择的作用。原文全景指标采用 Y 通道、裁边与球面加权，HVI 对照沿用 LOL 的 RGB 协议。[论文](https://eccv.ecva.net/virtual/2026/poster/5315) · [AdaptiveFusion 原码](https://github.com/nichenxingmeng/D2R2OSR/blob/02cac413e9c3f599b9c01579e7cab5bb25d4cd0c/d2r2osr/archs/d2r2osr_arch.py#L245) |
+| **P · CIDNet 原始连线对照** | 原版计算 I_LCA5 后，ID_block2 仍取融合前的 I。P 让它接收 `I + gain × (I_LCA5(I, HV) − I)`。初始 gain 为 0，设为 1 时等于完全接入该层。梯度检查确认原版 I_LCA5 参数没有来自输出的梯度，P 在非零 gain 时可收到梯度。 | 与同初始化的 baseline 比较即可。它回答的是这一级已有交互能否提高指标。原始参数量已经计入 I_LCA5；预训练基线中这组参数可能没有通过重建任务得到训练。[CIDNet 解码器](../net/CIDNet.py) |
+| **Q · Multinex，CVPR 2026** | 保留作者的六种解析亮度量：RGB 均值、Rec.709、最大通道、中间亮度、YCgCo 的 Y 和 RGB 的 L2 范数。零初始化的 1×1 投影将它们加到 I 分支第一层。 | HVI 的 I 已经包含最大通道。Q 测试其余亮度表示能否帮助区分同峰值、不同颜色的区域。可在同一 216 参数投影下重复输入六份最大通道值，对照额外输入信息的作用。六张图在全分辨率计算，显存开销随图像面积增长。[论文](https://arxiv.org/abs/2604.10359) · [原始定义](https://github.com/albrateanu/multinex/blob/e15790a963935569fff1ba6a8b0d33a791765749/basicsr/models/archs/Multinex_arch.py#L151) |
+
+**原文指标的含义。** Multinex 作者发布的表中，完整 Multinex 为 0.0446 M 参数，在 LOL-v2 Real 和 Synthetic 上分别为 23.04 和 25.04 dB；同表 CIDNet 为 24.11 和 25.71 dB。这支持将六种测量作为补充输入做小规模消融。Q 的最终分数需要用本仓库同协议的基线实测。[作者结果表](https://github.com/albrateanu/multinex/blob/e15790a963935569fff1ba6a8b0d33a791765749/assets/LOL_table.png)
+
+**另两篇值得跟踪的论文。** CVPR 2026 Highlight《Missing No More》使用共享字典与稀疏系数，在红外模态缺失时估计跨模态信息。若 HVI 的色度仅在极暗区丢失，可进一步检验用亮度结构条件化色度字典；原方法有真实红外训练信号和多阶段训练，迁移时需要重新定义监督。IJCV 2026 的 P-PatchDiff 提供渐进调整块大小与步长的方案；当小裁剪训练导致整图曝光不一致时，可另开训练配方对照。它的扩散采样过程需要额外推理预算。以上两项是研究备选。[Missing No More](https://openaccess.thecvf.com/content/CVPR2026/html/Zhang_Missing_No_More_Dictionary-Guided_Cross-Modal_Image_Fusion_under_Missing_Infrared_CVPR_2026_paper.html) · [P-PatchDiff](https://doi.org/10.1007/s11263-026-02995-w)
+
+优先比较 P、M 与同协议基线；若现有输出主要损失纹理，则把 N 提前。五组均可单独运行。以下命令假定已经准备好 LOL-v2 Real 数据以及本项目环境。选模使用从训练集划出的独立验证集，固定初始化、划分、增益和训练预算；第一轮胜出的方案可用多个种子复核。
+
+```bash
+DATA=./datasets/LOLv2/Real_captured
+for variant in p m n o q; do
+  python -m "experiments.${variant}" train \
+    --train-dir "$DATA/Train" --out "./results/real/${variant}" \
+    --epochs 1000 --batch-size 8 --crop 256 --lr 0.0001 --seed 42 || break
+done
+```
+
+上例按固定轮数训练，最终评测使用 `latest.pt`。若要按验证集选择 `best.pt`，给每组训练都加 `--val-dir "$DATA/Val" --eval-every 10`，再用独立 Test 做最终评测。以下命令以 M 为例。
+
+```bash
+python -m experiments.m eval --val-dir "$DATA/Test" --checkpoint ./results/real/m/latest.pt --lpips
+```
 
 ## 论文模块移植
 
@@ -87,7 +125,7 @@ datasets/LOLv2/Real_captured/
 
 ```bash
 DATA=./datasets/LOLv2/Real_captured
-for variant in baseline a b c d f g h i j k l; do
+for variant in baseline a b c d f g h i j k l m n o p q; do
   python -m "experiments.${variant}" train \
     --train-dir "$DATA/Train" --out "./results/real/${variant}" \
     --epochs 1000 --batch-size 8 --crop 256 --lr 0.0001 --seed 42 || break
@@ -100,7 +138,7 @@ done
 
 ```bash
 DATA=./datasets/LOLv2/Real_captured
-for variant in baseline a b c d f g h i j k l; do
+for variant in baseline a b c d f g h i j k l m n o p q; do
   python -m "experiments.${variant}" eval \
     --checkpoint "./results/real/${variant}/latest.pt" \
     --val-dir "$DATA/Test" --lpips || break

@@ -68,18 +68,28 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         
         self.trans = RGB_HVI()
         
+    def encode_intensity_input(self, rgb, intensity):
+        return self.IE_block0(intensity)
+
     def encode_hv_level2(self, hv, intensity, hvi):
         return self.HV_LCA2(hv, intensity)
 
     def decode_hv_level2(self, hv, intensity):
         return self.HV_LCA5(hv, intensity)
 
+    def select_decoder_intensity(self, intensity, attended):
+        # The original decoder passes the pre-attention tensor to ID_block2.
+        return intensity
+
+    def refine_decoder_intensity(self, intensity, hv):
+        return intensity
+
     def forward(self, x):
         dtypes = x.dtype
         hvi = self.trans.HVIT(x)
         i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
         # low
-        i_enc0 = self.IE_block0(i)
+        i_enc0 = self.encode_intensity_input(x, i)
         i_enc1 = self.IE_block1(i_enc0)
         hv_0 = self.HVE_block0(hvi)
         hv_1 = self.HVE_block1(hv_0)
@@ -108,11 +118,12 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         
         hv_3 = self.HVD_block3(hv_4, hv_jump2)
         i_dec3 = self.ID_block3(i_dec4, v_jump2)
-        i_dec2 = self.I_LCA5(i_dec3, hv_3)
+        i_dec2 = self.select_decoder_intensity(i_dec3, self.I_LCA5(i_dec3, hv_3))
         hv_2 = self.decode_hv_level2(hv_3, i_dec3)
         
         hv_2 = self.HVD_block2(hv_2, hv_jump1)
-        i_dec2 = self.ID_block2(i_dec3, v_jump1)
+        i_dec2 = self.ID_block2(i_dec2, v_jump1)
+        i_dec2 = self.refine_decoder_intensity(i_dec2, hv_2)
         
         i_dec1 = self.I_LCA6(i_dec2, hv_2)
         hv_1 = self.HV_LCA6(hv_2, i_dec2)
