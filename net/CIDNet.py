@@ -68,6 +68,12 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         
         self.trans = RGB_HVI()
         
+    def encode_hv_level2(self, hv, intensity, hvi):
+        return self.HV_LCA2(hv, intensity)
+
+    def decode_hv_level2(self, hv, intensity):
+        return self.HV_LCA5(hv, intensity)
+
     def forward(self, x):
         dtypes = x.dtype
         hvi = self.trans.HVIT(x)
@@ -88,7 +94,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         hv_2 = self.HVE_block2(hv_2)
         
         i_enc3 = self.I_LCA2(i_enc2, hv_2)
-        hv_3 = self.HV_LCA2(hv_2, i_enc2)
+        hv_3 = self.encode_hv_level2(hv_2, i_enc2, hvi)
         v_jump2 = i_enc3
         hv_jump2 = hv_3
         i_enc3 = self.IE_block3(i_enc2)
@@ -103,7 +109,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         hv_3 = self.HVD_block3(hv_4, hv_jump2)
         i_dec3 = self.ID_block3(i_dec4, v_jump2)
         i_dec2 = self.I_LCA5(i_dec3, hv_3)
-        hv_2 = self.HV_LCA5(hv_3, i_dec3)
+        hv_2 = self.decode_hv_level2(hv_3, i_dec3)
         
         hv_2 = self.HVD_block2(hv_2, hv_jump1)
         i_dec2 = self.ID_block2(i_dec3, v_jump1)
