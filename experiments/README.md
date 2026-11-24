@@ -13,8 +13,38 @@
 | [g](g.py) | 1,982,481 | 6,912 | 在解码器 HV_LCA5 后做二维 Haar 分解，让四个子带分别学习色度特征的残差，再重建到空间域 |
 | [h](h.py) | 1,975,569 | 0 | 在基础损失上增加局部 RGB 色度比例监督，以参考图亮度降低近黑区域的权重 |
 | [i](i.py) | 1,975,569 | 0 | 按每张训练图的局部 RGB 均方误差选困难区域，对误差最高的一部分额外监督 |
+| [j](j.py) | 1,999,501 | 23,932 | TPCNet 的 CG_MSA_V，以 I 特征引导 HV 解码 |
+| [k](k.py) | 1,998,465 | 22,896 | LAformer 的秩增强全局线性注意力 |
+| [l](l.py) | 1,985,506 | 9,937 | MArFE 的傅里叶重参数化线性层与正弦激活 |
 
 A 的门控初始为恒等混合，C、D 的残差投影初始为零，均可从原版权重开始。A 的 `--noise-std` 在 [0,1] sRGB 张量上定义，初值 0.015。一批裁剪产生两份训练观测，显存紧张时可调整所有对照组的 batch 大小。B 默认用合成的同曝光噪声对估计当前批次各亮度组的 HV 扰动方差，做有界归一化和最差组加权。它测量对附加噪声的敏感度，真实相机噪声标定需要另外采集数据。C 在输入坐标上按 32 像素窗口汇总并插值融合权重。D 只投影细节适配器输出矩阵的感知梯度，使其与保真适配器输出矩阵当前的列空间正交。两个目标都训练主干。
+
+## 论文模块移植
+
+J、K、L 均接在 `HV_LCA5` 后，使用同一套 RGB/HVI 配对损失。每次只启用一个新分支。复用现有基线时请保持数据划分、初始权重、训练轮数和评测增益一致。
+
+| 方案与论文 | 保留的原模块运算 | 适配到 HVI 的改动 |
+|---|---|---|
+| **J · TPCNet，ECCV 2026，低光增强** | `CG_MSA_V` 对两路特征分别作对角线配对下采样，交叉构造 Q/K，融合两路 V，做通道注意力，经 PixelShuffle 恢复分辨率，并加输入投影 | 两个输入分别取 HV 解码特征和同尺度 I 特征，各从 72 压到 24 通道，使用四头注意力，再投回 72 通道。输出投影以零初始化。适合检验亮度引导对暗部色彩恢复的作用。[论文](https://eccv.ecva.net/virtual/2026/poster/4351) · [作者源码 CG_MSA_V](https://github.com/2020shijingyi/TPCNet/blob/123b09fbc46dc5be8bce296f13f0efdec9d5589d/arch/TPCNet_arch.py#L280) |
+| **K · LAformer，ECCV 2026，图像复原** | 全局 `LinearAttention` 使用 ELU+1 核、按空间位置归一化的线性注意力和 V 分支的 5×5 深度卷积，两路相加后投影 | 在同一 HV 特征上用 72 通道、四个头运行，分母下限取 1e-6，输出投影以零初始化。适合检验远距离上下文对局部增强是否有帮助。[论文](https://eccv.ecva.net/virtual/2026/poster/5618) · [作者源码 LinearAttention](https://github.com/shallowdream204/LAformer/blob/b4a3dc705874631fa180105b38f3478226d9933f/basicsr/models/archs/laformerv2_arch.py#L92) |
+| **L · MArFE，ECCV 2026，多对比度 MRI 超分辨率** | 取 Q 分支中的“点卷积 → 正弦 → `Fourier_reparam_linear`”，按固定余弦基与可学习系数的乘积生成逐像素线性层权重 | 使用 72 通道，将原配置的 128 低频、128 高频和 32 相位缩为 8、8 和 4，相同的 0.05 基函数缩放。加零初始化的残差系数。这里的频率基沿**特征通道轴**展开。其参数量含 9,937 个新增可训练参数，另有 4,608 个固定基值随权重保存。[论文](https://eccv.ecva.net/virtual/2026/poster/3657) · [作者源码 Fourier_reparam_linear](https://github.com/zhiwen-shi/MArFE/blob/db507eea2ed9666b97d8c492a391cca964ec9496/model/dualref.py#L36) |
+
+**先试 J 或 K。** J 直接回答 I 分支提供的信息是否改善 HV 恢复，K 检验单路 HV 特征的空间上下文。L 可用于探索固定频率基对通道映射的作用。若 L 相对基线有提升，可进一步用同位置普通线性层对照，区分额外残差分支和傅里叶参数化的贡献。
+
+以下命令从仓库根目录运行这三组；数据和环境准备见下文。已有同协议基线可直接复用；如需微调，在三组和基线的训练命令中均加入同一 `--init` 权重。
+
+```bash
+DATA=./datasets/LOLv2/Real_captured
+for variant in j k l; do
+  python -m "experiments.${variant}" train \
+    --train-dir "$DATA/Train" --out "./results/real/${variant}" \
+    --epochs 1000 --batch-size 8 --crop 256 --lr 0.0001 --seed 42 || break
+done
+```
+
+三种算子已在相同尺寸、相同权重的随机 FP32 输入上分别与作者实现对照，检查了前向输出和输入梯度。三个完整实验均在 CPU 合成配对图上完成两轮训练和一次独立评测；真实 LOL 排名有待实测。
+
+**前两批方案的出处。** A 的局部门控与独立噪声一致性是本仓库的设计。B 对应 BBRD 的亮度分组与风险加权思路，改用 HV 误差、等距软分组和合成扰动估计。C 借鉴 RegionFuse 的区域专家思想，采用四种局部统计量进行软路由。D 借鉴 FreqOrtho-SR 的正交专家思想，将投影用于两个适配器的指定梯度。F–I 的设计动机与论文链接见下一节。这些实验的指标需分别在 HVI 上测量。[BBRD](https://eccv.ecva.net/virtual/2026/poster/5112) · [RegionFuse](https://github.com/search?q=RegionFuse+Region-Adaptive+Pixel+Distribution&type=repositories) · [FreqOrtho-SR](https://eccv.ecva.net/virtual/2026/poster/4909)
 
 ## 第二批实验怎么选
 
@@ -57,7 +87,7 @@ datasets/LOLv2/Real_captured/
 
 ```bash
 DATA=./datasets/LOLv2/Real_captured
-for variant in baseline a b c d f g h i; do
+for variant in baseline a b c d f g h i j k l; do
   python -m "experiments.${variant}" train \
     --train-dir "$DATA/Train" --out "./results/real/${variant}" \
     --epochs 1000 --batch-size 8 --crop 256 --lr 0.0001 --seed 42 || break
@@ -70,7 +100,7 @@ done
 
 ```bash
 DATA=./datasets/LOLv2/Real_captured
-for variant in baseline a b c d f g h i; do
+for variant in baseline a b c d f g h i j k l; do
   python -m "experiments.${variant}" eval \
     --checkpoint "./results/real/${variant}/latest.pt" \
     --val-dir "$DATA/Test" --lpips || break
