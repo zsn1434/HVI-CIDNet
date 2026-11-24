@@ -18,6 +18,39 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 
 </div>
 
+## 中文指南 · 训练 HVI 基线与四个改进方案
+
+这四组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
+
+| 训练入口 | 相对原版 CIDNet 的改动 | 总参数 | 新增参数 |
+|---|---|---:|---:|
+| `baseline` | 原版 CIDNet，使用与 A–D 相同的数据、基础损失和学习率调度 | 1,975,569 | 0 |
+| `a` | 在编码器 `HV_LCA2` 内，用亮度、色度半径和局部色度偏差调节 HV 特征与跨分支残差的权重。训练时对同一图像独立加噪两次，约束两次输出的 HV 色度一致 | 1,975,619 | 50 |
+| `b` | 仅改训练损失。按输入亮度将像素软分组，默认分成五组，根据各组的噪声敏感度和预测误差加权监督 HV 色度 | 1,975,569 | 0 |
+| `c` | 在编码器 `HV_LCA2` 后增加两个残差专家。按输入图像的 32×32 区域统计亮度、色度和纹理，再将区域权重插值到特征图上混合两个专家的输出 | 1,977,931 | 2,362 |
+| `d` | 在解码器 `HV_LCA5` 后增加保真和细节两个适配器，分别由重建和感知损失训练。更新时，从细节适配器最后一层的梯度中去除沿保真适配器输出子空间的分量 | 1,977,873 | 2,304 |
+
+### 运行训练
+
+在已配置依赖的环境中，从仓库根目录运行以下 Bash 命令。以 LOL-v2 Real 为例，将 `DATA` 指向包含 `Train` 和 `Test` 的目录，两者各有配对的 `Low/` 和 `Normal/` 图片。先运行基线，再把 `VARIANT` 改成 `a`、`b`、`c` 或 `d`，重新执行训练命令。每个方案会写入独立目录。
+
+```bash
+DATA=./datasets/LOLv2/Real_captured
+VARIANT=baseline
+python -m "experiments.${VARIANT}" train \
+  --train-dir "$DATA/Train" --out "./results/real/$VARIANT" \
+  --epochs 1000 --batch-size 8 --crop 256 --lr 0.0001 --seed 42
+```
+
+上例从头训练，每轮保存 `latest.pt`。训练中断后，在同一条命令末尾加 `--resume` 即可续训。如需按验证 PSNR 选取 `best.pt`，从训练集中单独划出验证集，并在首次训练时加上 `--val-dir "$DATA/Val" --eval-every 10`。保留 `Test` 用于最终评测。
+
+```bash
+python -m "experiments.${VARIANT}" eval \
+  --checkpoint "./results/real/$VARIANT/latest.pt" --val-dir "$DATA/Test" --lpips
+```
+
+云环境激活命令、数据配对示例、五组批量训练、原版权重微调和各方案消融参数见[完整实验指南](experiments/README.md)。
+
 &nbsp;
 
 <details open>

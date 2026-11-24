@@ -22,6 +22,20 @@ source /workspace/.hvi-venv/bin/activate
 export TORCH_HOME=/workspace/.cache/hvi-torch
 ```
 
+准备 LOL-v2 Real 时，`--train-dir` 和 `--val-dir` 均指向一组配对图片的父目录。例如，下面两张编号相同的训练图分别作为输入和监督目标，同一对图片的宽高须一致。
+
+```text
+datasets/LOLv2/Real_captured/
+├── Train/
+│   ├── Low/low00690.png
+│   └── Normal/normal00690.png
+└── Test/
+    ├── Low/low00001.png
+    └── Normal/normal00001.png
+```
+
+默认裁剪为 256×256。如果训练图像的短边小于 256，请将所有对照组的 `--crop` 调为不超过最短边的正整数，且须为 8 的倍数。单组训练与评测命令见[仓库首页](../Readme.md)。
+
 从头训练的示例依次运行同一协议下的五组。分别启动单组时，在循环列表中只保留对应字母。也可以给每组加相同的 `--init /path/to/original_cidnet.pth` 进行微调。`--init` 接受原仓库的纯 state_dict。
 
 ```bash
@@ -49,6 +63,8 @@ done
 评测逐图计算 RGB 8-bit PSNR 和 SSIM 再取平均，`--lpips` 额外计算 AlexNet LPIPS。使用固定输出增益 `--alpha 1`，关闭 GT-Mean。图像会补齐到 8 的倍数，评测前裁回原尺寸。若对照原仓库中采用 0.8 增益的 Real 配方，可另列所有方案在 `--alpha 0.8` 下的结果。五组主比较使用同一权重初始化方式、固定增益、训练集和指标实现。
 
 ## 训练设置与单项对照
+
+四个方案的实现分别位于 [a.py](a.py)、[b.py](b.py)、[c.py](c.py) 和 [d.py](d.py)。主干把编码器的 `HV_LCA2` 调用封装为 `encode_hv_level2`，供 A 和 C 改写，把解码器的 `HV_LCA5` 调用封装为 `decode_hv_level2`，供 D 改写。B 直接使用原版模型，只在训练时计算分组损失。[主干实现](../net/CIDNet.py)
 
 共享配方使用 Adam、余弦退火、反传后梯度裁剪 0.01，以及原仓库的 RGB/HVI 双域 L1、SSIM、边缘和 VGG19 特征损失。该训练器独立于原版 train.py，学习率曲线采用无预热的余弦退火。首次运行感知损失或 LPIPS 需要可用的预训练权重。以新训练器的 baseline 作为归因对照。
 
