@@ -18,9 +18,9 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 
 </div>
 
-## 中文指南 · 训练 HVI 基线与十六个改进方案
+## 中文指南 · 训练 HVI 基线与二十一个改进方案
 
-这十六组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
+这二十一组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
 
 | 训练入口 | 相对原版 CIDNet 的改动 | 总参数 | 新增参数 |
 |---|---|---:|---:|
@@ -43,6 +43,8 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 | `q` | Multinex 六种解析亮度图补充 I 分支的输入 | 1,975,785 | 216 |
 
 近期论文的模块移植实验可优先查看 J、K、L。三组分别实现 TPCNet 的跨分支注意力、LAformer 的全局线性注意力和 MArFE 的傅里叶线性层，并在相同的解码位置与基线比较。[论文、作者源码与移植说明](experiments/README.md#论文模块移植)
+
+**最新五组 R–V** 来自五篇使用独立主干的 CVPR 2026 论文。可分别训练信息密度调制、聚类中心扫描、大核空间注意力、动态采样和盲点教师监督。[中文快速训练与消融指南](experiments/README-r-v.md)
 
 M–Q 分别验证按图像建模退化、边缘增强、跨分支门控、原有亮度连线和解析亮度先验。[论文拆解、选型与训练命令](experiments/README.md#亮度分支与退化先验实验)
 

@@ -43,7 +43,9 @@ class Pairs(Dataset):
         return len(self.pairs)
 
     def __getitem__(self, index):
-        paths = self.pairs[index]
+        return self.load_images(self.pairs[index])
+
+    def load_images(self, paths):
         images = []
         for path in paths:
             with Image.open(path) as image:
@@ -60,7 +62,7 @@ class Pairs(Dataset):
             for flip in (Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM):
                 if random.random() < 0.5:
                     images = [im.transpose(flip) for im in images]
-        return to_tensor(images[0]), to_tensor(images[1])
+        return tuple(to_tensor(image) for image in images)
 
 
 def noisy_views(low, std):
@@ -134,7 +136,8 @@ def save_checkpoint(state, path):
     os.replace(tmp, path)
 
 
-def main(variant, model_class, backward, add_options=None):
+def main(variant, model_class, backward, add_options=None, *, configure=None,
+         resume_keys=(), train_dataset=None):
     parser = argparse.ArgumentParser(description=f'HVI experiment {variant}')
     parser.add_argument('command', choices=['train', 'eval'])
     parser.add_argument('--train-dir', type=Path)
@@ -184,11 +187,15 @@ def main(variant, model_class, backward, add_options=None):
         import lpips
         lpips_net = lpips.LPIPS(net='alex').to(device).eval()
     if args.command == 'eval':
-        load_model(args.checkpoint, model, variant)
+        checkpoint = load_model(args.checkpoint, model, variant)
+        if configure:
+            configure(model, checkpoint["config"])
         print(json.dumps(evaluate(model, validation, device, lpips_net, args.alpha)))
         return
 
-    train = Pairs(args.train_dir, args.crop)
+    if configure:
+        configure(model, vars(args))
+    train = train_dataset(args) if train_dataset else Pairs(args.train_dir, args.crop)
     out = args.out or Path('results/experiments') / args.train_dir.parent.name / variant
     out.mkdir(parents=True, exist_ok=True)
     latest = out / 'latest.pt'
@@ -207,7 +214,7 @@ def main(variant, model_class, backward, add_options=None):
     best, start = -math.inf, 0
     if args.resume:
         state = load_model(latest, model, variant)
-        for key in ('epochs', 'train_dir', 'crop', 'batch_size', 'perceptual_weight', 'alpha', 'val_dir',
+        for key in (*resume_keys, 'epochs', 'train_dir', 'crop', 'batch_size', 'perceptual_weight', 'alpha', 'val_dir',
                     'seed', 'lr', 'noise_std', 'bands', 'band_mode', 'band_weight',
                     'consistency_weight', 'disable_projection', 'chroma_weight', 'hard_weight', 'hard_fraction'):
             if config.get(key) != state['config'].get(key):
@@ -231,12 +238,13 @@ def main(variant, model_class, backward, add_options=None):
         loader = DataLoader(train, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
                             generator=sampler_rng, pin_memory=device.type == 'cuda')
         total = 0.
-        for low, target in loader:
+        for batch in loader:
+            *inputs, target = (tensor.to(device) for tensor in batch)
             optimizer.zero_grad(set_to_none=True)
-            loss = backward(model, low.to(device), target.to(device), objective, args)
+            loss = backward(model, *inputs, target, objective, args)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.01, error_if_nonfinite=True)
             optimizer.step()
-            total += loss.item() * low.shape[0]
+            total += loss.item() * target.shape[0]
         record = {'epoch': epoch, 'loss': total / len(train), 'lr': optimizer.param_groups[0]['lr']}
         scheduler.step()
         improved = False

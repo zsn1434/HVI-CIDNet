@@ -84,12 +84,17 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
     def refine_decoder_intensity(self, intensity, hv):
         return intensity
 
+    def refine_encoder_hv(self, hv, intensity, hvi, auxiliary):
+        return hv
+
+    def input_features(self, rgb):
+        hvi = self.trans.HVIT(rgb)
+        return hvi, self.encode_intensity_input(rgb, hvi[:, 2:].to(rgb.dtype))
+
     def forward(self, x):
-        dtypes = x.dtype
-        hvi = self.trans.HVIT(x)
-        i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
-        # low
-        i_enc0 = self.encode_intensity_input(x, i)
+        return self.enhance(*self.input_features(x))
+
+    def enhance(self, hvi, i_enc0, auxiliary=None):
         i_enc1 = self.IE_block1(i_enc0)
         hv_0 = self.HVE_block0(hvi)
         hv_1 = self.HVE_block1(hv_0)
@@ -106,7 +111,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         i_enc3 = self.I_LCA2(i_enc2, hv_2)
         hv_3 = self.encode_hv_level2(hv_2, i_enc2, hvi)
         v_jump2 = i_enc3
-        hv_jump2 = hv_3
+        hv_jump2 = self.refine_encoder_hv(hv_3, i_enc2, hvi, auxiliary)
         i_enc3 = self.IE_block3(i_enc2)
         hv_3 = self.HVE_block3(hv_2)
         
