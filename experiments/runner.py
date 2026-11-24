@@ -168,7 +168,10 @@ def main(variant, model_class, backward, add_options=None):
         parser.error('invalid loss, learning rate, evaluation gain or worker count')
     if variant == 'd' and args.command == 'train' and args.perceptual_weight == 0:
         parser.error('D requires a nonzero perceptual loss')
-    if any(getattr(args, key, 0) < 0 for key in ('consistency_weight', 'noise_std', 'band_weight')):
+    if variant == 'i' and not 0 < args.hard_fraction <= 1:
+        parser.error('--hard-fraction must be in (0, 1]')
+    weights = ('consistency_weight', 'noise_std', 'band_weight', 'chroma_weight', 'hard_weight')
+    if any(not math.isfinite(getattr(args, key, 0)) or getattr(args, key, 0) < 0 for key in weights):
         parser.error('noise and auxiliary loss weights must be nonnegative')
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -206,7 +209,7 @@ def main(variant, model_class, backward, add_options=None):
         state = load_model(latest, model, variant)
         for key in ('epochs', 'train_dir', 'crop', 'batch_size', 'perceptual_weight', 'alpha', 'val_dir',
                     'seed', 'lr', 'noise_std', 'bands', 'band_mode', 'band_weight',
-                    'consistency_weight', 'disable_projection'):
+                    'consistency_weight', 'disable_projection', 'chroma_weight', 'hard_weight', 'hard_fraction'):
             if config.get(key) != state['config'].get(key):
                 parser.error(f'--resume requires the same {key}')
         optimizer.load_state_dict(state['optimizer'])
