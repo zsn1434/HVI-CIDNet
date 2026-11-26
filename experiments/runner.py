@@ -7,6 +7,8 @@ import random
 import re
 from pathlib import Path
 
+import cv2
+import numpy as np
 import torch
 from PIL import Image
 from torch import nn
@@ -98,23 +100,47 @@ def standard_backward(model, low, target, objective, args):
     return loss.detach()
 
 
+def padded_input(low):
+    h, w = low.shape[-2:]
+    return F.pad(low, (0, -w % 8, 0, -h % 8), mode='reflect')
+
+
 @torch.inference_mode()
-def evaluate(model, pairs, device, lpips_net, alpha):
+def evaluate(model, pairs, device, lpips_net, alpha, protocol='plain', gt_mean=False, predict=None):
     model.eval()
+    transform = model.trans
+    saved = transform.gated, transform.gated2, transform.alpha
+    try:
+        transform.gated = protocol == 'lolv1'
+        transform.gated2 = protocol == 'lolv2-real'
+        transform.alpha = 0.8 if transform.gated2 else 1.0
+        return paired_metrics(model, pairs, device, lpips_net, alpha, gt_mean, predict)
+    finally:
+        transform.gated, transform.gated2, transform.alpha = saved
+
+
+def paired_metrics(model, pairs, device, lpips_net, alpha, gt_mean, predict):
     totals = {'psnr': 0., 'ssim': 0.}
     if lpips_net is not None:
         totals['lpips'] = 0.
-    for low, target in DataLoader(pairs, batch_size=1):
+    for index, (low, target) in enumerate(DataLoader(pairs, batch_size=1)):
         h, w = low.shape[-2:]
         if min(h, w) < 11:
             raise ValueError('SSIM needs images of at least 11 x 11 pixels')
-        low = F.pad(low.to(device), (0, -w % 8, 0, -h % 8), mode='reflect')
-        pred = (alpha * model(low)[..., :h, :w]).clamp(0, 1)
+        low = padded_input(low.to(device))
+        output = model(low) if predict is None else predict(low, index)
+        pred = (alpha * output[..., :h, :w]).clamp(0, 1)
         # Match torchvision ToPILImage in the original 8-bit evaluation.
         pred = pred.mul(255).byte()
         gt = target.mul(255).round().byte()
         pred_rgb = pred[0].permute(1, 2, 0).cpu().numpy()
         gt_rgb = gt[0].permute(1, 2, 0).numpy()
+        if gt_mean:
+            pred_mean = cv2.cvtColor(pred_rgb, cv2.COLOR_RGB2GRAY).mean()
+            gt_gray = cv2.cvtColor(gt_rgb, cv2.COLOR_RGB2GRAY).mean()
+            if pred_mean > 0:
+                pred_rgb = np.clip(pred_rgb * (gt_gray / pred_mean), 0, 255)
+                pred = torch.as_tensor(pred_rgb, device=device).permute(2, 0, 1).unsqueeze(0)
         totals['psnr'] += float(calculate_psnr(pred_rgb, gt_rgb))
         totals['ssim'] += float(calculate_ssim(pred_rgb, gt_rgb))
         if lpips_net is not None:
@@ -137,7 +163,7 @@ def save_checkpoint(state, path):
 
 
 def main(variant, model_class, backward, add_options=None, *, configure=None,
-         resume_keys=(), train_dataset=None):
+         resume_keys=(), train_dataset=None, evaluation_predictor=None):
     parser = argparse.ArgumentParser(description=f'HVI experiment {variant}')
     parser.add_argument('command', choices=['train', 'eval'])
     parser.add_argument('--train-dir', type=Path)
@@ -156,6 +182,9 @@ def main(variant, model_class, backward, add_options=None, *, configure=None,
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--eval-every', type=int, default=10)
     parser.add_argument('--alpha', type=float, default=1., help='Fixed output gain for evaluation')
+    parser.add_argument('--eval-protocol', choices=('plain', 'lolv1', 'lolv2-real'), default='plain',
+                        help='Validation/test HVI output settings: plain, gated, or gated2 with alpha=0.8')
+    parser.add_argument('--gt-mean', action='store_true', help='Match each predicted gray mean to its reference')
     parser.add_argument('--lpips', action='store_true', help='Include pretrained AlexNet LPIPS in evaluation')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     if add_options:
@@ -167,6 +196,8 @@ def main(variant, model_class, backward, add_options=None, *, configure=None,
         parser.error('train needs --train-dir')
     if min(args.epochs, args.batch_size, args.eval_every, args.crop) < 1 or args.crop % 8:
         parser.error('positive epochs, batch size and interval required; crop must be a positive multiple of eight')
+    if args.eval_protocol != 'plain' and args.alpha != 1:
+        parser.error('--alpha is an external gain for plain mode; named protocols set their own gain')
     if args.perceptual_weight < 0 or args.lr <= 0 or args.alpha <= 0 or args.workers < 0:
         parser.error('invalid loss, learning rate, evaluation gain or worker count')
     if variant == 'd' and args.command == 'train' and args.perceptual_weight == 0:
@@ -190,7 +221,9 @@ def main(variant, model_class, backward, add_options=None, *, configure=None,
         checkpoint = load_model(args.checkpoint, model, variant)
         if configure:
             configure(model, checkpoint["config"])
-        print(json.dumps(evaluate(model, validation, device, lpips_net, args.alpha)))
+        predict = evaluation_predictor(model, validation, device, args) if evaluation_predictor else None
+        print(json.dumps(evaluate(model, validation, device, lpips_net, args.alpha,
+                                  args.eval_protocol, args.gt_mean, predict)))
         return
 
     if configure:
@@ -214,10 +247,11 @@ def main(variant, model_class, backward, add_options=None, *, configure=None,
     best, start = -math.inf, 0
     if args.resume:
         state = load_model(latest, model, variant)
-        for key in (*resume_keys, 'epochs', 'train_dir', 'crop', 'batch_size', 'perceptual_weight', 'alpha', 'val_dir',
+        old_config = {'eval_protocol': 'plain', 'gt_mean': False, **state['config']}
+        for key in ('eval_protocol', 'gt_mean', *resume_keys, 'epochs', 'train_dir', 'crop', 'batch_size', 'perceptual_weight', 'alpha', 'val_dir',
                     'seed', 'lr', 'noise_std', 'bands', 'band_mode', 'band_weight',
                     'consistency_weight', 'disable_projection', 'chroma_weight', 'hard_weight', 'hard_fraction'):
-            if config.get(key) != state['config'].get(key):
+            if config.get(key) != old_config.get(key):
                 parser.error(f'--resume requires the same {key}')
         optimizer.load_state_dict(state['optimizer'])
         scheduler.load_state_dict(state['scheduler'])
@@ -249,7 +283,7 @@ def main(variant, model_class, backward, add_options=None, *, configure=None,
         scheduler.step()
         improved = False
         if validation is not None and (epoch % args.eval_every == 0 or epoch == args.epochs):
-            record.update(evaluate(model, validation, device, lpips_net, args.alpha))
+            record.update(evaluate(model, validation, device, lpips_net, args.alpha, args.eval_protocol, args.gt_mean))
             improved = record['psnr'] > best
             best = max(record['psnr'], best)
         history.append(record)

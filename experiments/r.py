@@ -21,6 +21,15 @@ class GDN(nn.Module):
         return x * denominator.rsqrt()
 
 
+def gaussian_bits(light, mean, scale):
+    # Detach the coding target so the loss does not reward a collapsed I projection.
+    sample = light.detach() + torch.rand_like(light) - 0.5
+    centered = sample - mean
+    width = scale * math.sqrt(2)
+    probability = 0.5 * (((centered + 0.5) / width).erf() - ((centered - 0.5) / width).erf())
+    return -probability.clamp_min(1e-8).log2().mean()
+
+
 class InformationCIDNet(CIDNet):
     def __init__(self):
         super().__init__()
@@ -39,12 +48,7 @@ class InformationCIDNet(CIDNet):
         light = self.light_in(intensity)
         scale = F.softplus(self.scale(light)) + 1e-3
         if auxiliary is not None:
-            # Detach the coding target so the loss does not reward a collapsed I projection.
-            sample = light.detach() + torch.rand_like(light) - 0.5
-            centered = sample - self.mean(light)
-            width = scale * math.sqrt(2)
-            probability = 0.5 * (((centered + 0.5) / width).erf() - ((centered - 0.5) / width).erf())
-            auxiliary.append(-probability.clamp_min(1e-8).log2().mean())
+            auxiliary.append(gaussian_bits(light, self.mean(light), scale))
         if self.prior == "constant":
             prior = torch.ones_like(scale)
         elif self.prior == "gradient":

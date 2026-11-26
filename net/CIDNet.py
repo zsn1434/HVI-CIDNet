@@ -87,6 +87,16 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
     def refine_encoder_hv(self, hv, intensity, hvi, auxiliary):
         return hv
 
+    def routing_context(self, hvi):
+        return None
+
+    def encode_hv_skip(self, hv, intensity, hvi, context, auxiliary):
+        features = self.encode_hv_level2(hv, intensity, hvi)
+        return self.refine_encoder_hv(features, intensity, hvi, auxiliary)
+
+    def decode_intensity_with_context(self, intensity, attended, context):
+        return self.select_decoder_intensity(intensity, attended)
+
     def input_features(self, rgb):
         hvi = self.trans.HVIT(rgb)
         return hvi, self.encode_intensity_input(rgb, hvi[:, 2:].to(rgb.dtype))
@@ -94,7 +104,9 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
     def forward(self, x):
         return self.enhance(*self.input_features(x))
 
-    def enhance(self, hvi, i_enc0, auxiliary=None):
+    def enhance(self, hvi, i_enc0, auxiliary=None, *, context=None):
+        if context is None:
+            context = self.routing_context(hvi)
         i_enc1 = self.IE_block1(i_enc0)
         hv_0 = self.HVE_block0(hvi)
         hv_1 = self.HVE_block1(hv_0)
@@ -109,9 +121,8 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         hv_2 = self.HVE_block2(hv_2)
         
         i_enc3 = self.I_LCA2(i_enc2, hv_2)
-        hv_3 = self.encode_hv_level2(hv_2, i_enc2, hvi)
         v_jump2 = i_enc3
-        hv_jump2 = self.refine_encoder_hv(hv_3, i_enc2, hvi, auxiliary)
+        hv_jump2 = self.encode_hv_skip(hv_2, i_enc2, hvi, context, auxiliary)
         i_enc3 = self.IE_block3(i_enc2)
         hv_3 = self.HVE_block3(hv_2)
         
@@ -123,7 +134,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         
         hv_3 = self.HVD_block3(hv_4, hv_jump2)
         i_dec3 = self.ID_block3(i_dec4, v_jump2)
-        i_dec2 = self.select_decoder_intensity(i_dec3, self.I_LCA5(i_dec3, hv_3))
+        i_dec2 = self.decode_intensity_with_context(i_dec3, self.I_LCA5(i_dec3, hv_3), context)
         hv_2 = self.decode_hv_level2(hv_3, i_dec3)
         
         hv_2 = self.HVD_block2(hv_2, hv_jump1)
