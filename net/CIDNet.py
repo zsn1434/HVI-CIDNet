@@ -126,9 +126,24 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         hv_2 = self.HV_LCA1(hv_1, i_enc1)
         v_jump1 = i_enc2
         hv_jump1 = hv_2
+        hv_2 = self.refine_half(hv_2, i_enc2)
         i_enc2 = self.IE_block2(i_enc2)
         hv_2 = self.HVE_block2(hv_2)
         
+        return self.decode_quarter(hv_2, i_enc2, hvi, context, auxiliary,
+                                   (i_jump0, hv_jump0, v_jump1, hv_jump1))
+
+    def refine_half(self, hv, intensity):
+        return hv
+
+    def exchange(self, hv, intensity, level):
+        return hv, intensity
+
+    def refine_residual(self, hvi, residual):
+        return residual
+
+    def decode_quarter(self, hv_2, i_enc2, hvi, context, auxiliary, skips):
+        i_jump0, hv_jump0, v_jump1, hv_jump1 = skips
         i_enc3 = self.I_LCA2(i_enc2, hv_2)
         v_jump2 = i_enc3
         hv_jump2 = self.encode_hv_skip(hv_2, i_enc2, hvi, context, auxiliary)
@@ -141,11 +156,13 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         i_dec4 = self.I_LCA4(i_enc4,hv_4)
         hv_4 = self.HV_LCA4(hv_4, i_enc4)
         
+        hv_4, i_dec4 = self.exchange(hv_4, i_dec4, 3)
         hv_3 = self.HVD_block3(hv_4, hv_jump2)
         i_dec3 = self.ID_block3(i_dec4, v_jump2)
         i_dec2 = self.decode_intensity_with_context(i_dec3, self.I_LCA5(i_dec3, hv_3), context)
         hv_2 = self.decode_hv_level2(hv_3, i_dec3)
         
+        hv_2, i_dec2 = self.exchange(hv_2, i_dec2, 2)
         hv_2 = self.upsample_decoder_hv(hv_2, hv_jump1, i_dec3, hvi)
         i_dec2 = self.ID_block2(i_dec2, v_jump1)
         i_dec2 = self.condition_decoder_intensity(i_dec2, hv_2, context)
@@ -158,7 +175,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         hv_1 = self.HVD_block1(hv_1, hv_jump0)
         hv_0 = self.HVD_block0(hv_1)
         
-        output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
+        output_hvi = self.refine_residual(hvi, torch.cat([hv_0, i_dec0], dim=1)) + hvi
         output_rgb = self.output_color(output_hvi, hv_3)
 
         return output_rgb

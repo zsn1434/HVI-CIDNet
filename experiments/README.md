@@ -2,6 +2,8 @@
 
 从仓库根目录使用 `python -m experiments.<方案> train` 训练，使用同一模块的 `eval` 评测。每个方案文件都定义了自己的改动。公共训练器在 `experiments/runner.py`。基线沿用原 CIDNet 的解码连线。P 单独检验将 I_LCA5 输出接回主路径的作用。
 
+AE–AI 的七个入口和参数表见[训练与消融指南](README-ae-ai.md)。
+
 AA–AD 的训练入口、来源论文、模型参数、消融和 AD 权重导出见[独立方案指南](README-aa-ad.md)。
 
 W–Z 接续 C、P、R、M 的实验结果，提供四个独立训练入口及对应的验证协议。[W–Z 的改动、参数量、训练和消融](README-w-z.md)
