@@ -84,6 +84,15 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
     def refine_decoder_intensity(self, intensity, hv):
         return intensity
 
+    def upsample_decoder_hv(self, hv, skip, intensity, hvi):
+        return self.HVD_block2(hv, skip)
+
+    def condition_decoder_intensity(self, intensity, hv, context):
+        return self.refine_decoder_intensity(intensity, hv)
+
+    def output_color(self, output_hvi, hv_features):
+        return self.trans.PHVIT(output_hvi)
+
     def refine_encoder_hv(self, hv, intensity, hvi, auxiliary):
         return hv
 
@@ -137,9 +146,9 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         i_dec2 = self.decode_intensity_with_context(i_dec3, self.I_LCA5(i_dec3, hv_3), context)
         hv_2 = self.decode_hv_level2(hv_3, i_dec3)
         
-        hv_2 = self.HVD_block2(hv_2, hv_jump1)
+        hv_2 = self.upsample_decoder_hv(hv_2, hv_jump1, i_dec3, hvi)
         i_dec2 = self.ID_block2(i_dec2, v_jump1)
-        i_dec2 = self.refine_decoder_intensity(i_dec2, hv_2)
+        i_dec2 = self.condition_decoder_intensity(i_dec2, hv_2, context)
         
         i_dec1 = self.I_LCA6(i_dec2, hv_2)
         hv_1 = self.HV_LCA6(hv_2, i_dec2)
@@ -150,7 +159,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         hv_0 = self.HVD_block0(hv_1)
         
         output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
-        output_rgb = self.trans.PHVIT(output_hvi)
+        output_rgb = self.output_color(output_hvi, hv_3)
 
         return output_rgb
     

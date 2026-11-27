@@ -18,9 +18,9 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 
 </div>
 
-## 中文指南 · 训练 HVI 基线与二十五个改进方案
+## 中文指南 · 训练 HVI 基线与二十九个改进方案
 
-这二十五组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
+这二十九组实验比较不同改动对配对低光增强的影响。用同一训练器运行 `baseline` 和所选方案，在相同的 LOL 测试集上比较 PSNR、SSIM 和可选的 LPIPS。下表给出默认模型的参数量，实际指标需训练后测量。
 
 | 训练入口 | 相对原版 CIDNet 的改动 | 总参数 | 新增参数 |
 |---|---|---:|---:|
@@ -41,6 +41,8 @@ Previous Version: [You Only Need One Color Space: An Efficient Network for Low-l
 | `o` | D²R²OSR 空间与通道双门控，将 HV 信息注入同尺度 I 解码特征 | 2,000,996 | 25,427 |
 | `p` | 将已有 I_LCA5 输出经可学习系数接回亮度解码器，验证原版连线 | 1,975,570 | 1 |
 | `q` | Multinex 六种解析亮度图补充 I 分支的输入 | 1,975,785 | 216 |
+
+**AA–AD 四组独立实验**分别测试整图曝光指导、各向异性高斯上采样、双边网格色度变换和跨尺度自监督。[中文训练、评测和消融指南](experiments/README-aa-ad.md)
 
 **W–Z 四组融合实验**分别测试区域引导亮度门控、尺度引导专家路由、全局字典调节区域路由，以及亮度更新的高低频分解。可独立训练，并按 LOLv1、LOLv2-Real、LOLv2-Syn 对应口径评测。[四组的训练命令、参数量与消融](experiments/README-w-z.md)
 

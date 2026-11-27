@@ -60,7 +60,9 @@ class NormUpsample(nn.Module):
         self.up = nn.Conv2d(out_ch*2,out_ch,kernel_size=1,stride=1, padding=0, bias=False)
             
     def forward(self, x,y):
-        x = self.up_scale(x)
+        return self.fuse_skip(self.up_scale(x), y)
+
+    def fuse_skip(self, x, y):
         x = torch.cat([x, y],dim=1)
         x = self.up(x)
         x = self.prelu(x)
