@@ -142,10 +142,14 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
     def refine_residual(self, hvi, residual):
         return residual
 
+    def quarter_context(self, intensity, context, auxiliary):
+        return context
+
     def decode_quarter(self, hv_2, i_enc2, hvi, context, auxiliary, skips):
         i_jump0, hv_jump0, v_jump1, hv_jump1 = skips
         i_enc3 = self.I_LCA2(i_enc2, hv_2)
         v_jump2 = i_enc3
+        context = self.quarter_context(i_enc2, context, auxiliary)
         hv_jump2 = self.encode_hv_skip(hv_2, i_enc2, hvi, context, auxiliary)
         i_enc3 = self.IE_block3(i_enc2)
         hv_3 = self.HVE_block3(hv_2)

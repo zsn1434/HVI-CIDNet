@@ -7,6 +7,10 @@ from experiments.p import IntensitySkipCIDNet
 from experiments.runner import main, standard_backward
 
 
+def smooth_update(delta):
+    return F.avg_pool2d(F.pad(delta, (2, 2, 2, 2), mode='replicate'), 5, stride=1)
+
+
 class FrequencySkipCIDNet(IntensitySkipCIDNet):
     def __init__(self):
         super().__init__()
@@ -17,7 +21,7 @@ class FrequencySkipCIDNet(IntensitySkipCIDNet):
         if self.band_mode == 'tied':
             return super().select_decoder_intensity(intensity, attended)
         delta = attended - intensity
-        smooth = F.avg_pool2d(F.pad(delta, (2, 2, 2, 2), mode='replicate'), 5, stride=1)
+        smooth = smooth_update(delta)
         detail = delta - smooth
         if self.band_mode == 'low':
             return intensity + self.gain * smooth

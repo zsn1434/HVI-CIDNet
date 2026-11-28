@@ -44,15 +44,22 @@ class InformationCIDNet(CIDNet):
         self.out = nn.Conv2d(16, 72, 1, bias=False)
         nn.init.zeros_(self.out.weight)
 
-    def refine_encoder_hv(self, hv, intensity, hvi, auxiliary):
+    def information_scale(self, intensity, auxiliary):
         light = self.light_in(intensity)
         scale = F.softplus(self.scale(light)) + 1e-3
         if auxiliary is not None:
             auxiliary.append(gaussian_bits(light, self.mean(light), scale))
+        return scale
+
+    def refine_encoder_hv(self, hv, intensity, hvi, auxiliary):
+        scale = self.information_scale(intensity, auxiliary)
+        return self.apply_information(hv, hvi, scale)
+
+    def apply_information(self, hv, hvi, scale):
         if self.prior == "constant":
             prior = torch.ones_like(scale)
         elif self.prior == "gradient":
-            brightness = F.adaptive_avg_pool2d(hvi[:, 2:], light.shape[-2:])
+            brightness = F.adaptive_avg_pool2d(hvi[:, 2:], scale.shape[-2:])
             dx = F.pad(brightness.diff(dim=-1).abs(), (0, 1))
             dy = F.pad(brightness.diff(dim=-2).abs(), (0, 0, 0, 1))
             prior = (dx + dy).expand_as(scale)
